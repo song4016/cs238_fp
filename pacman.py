@@ -52,7 +52,12 @@ grid = [
 ]
 
 # Count initial dots
-total_dots = sum(row.count(2) for row in grid)
+total_dots = 0
+for row in range(GRID_HEIGHT):
+    for col in range(GRID_WIDTH):
+        if grid[row][col] == 2:
+            total_dots += 1
+
 
 # Player and ghost settings
 player_pos = [10, 15]  # Grid coordinates
