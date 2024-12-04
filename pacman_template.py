@@ -179,6 +179,20 @@ def get_line(x0, y0, x1, y1):
     return points
 
 
+def move_pacman():
+    # NEW CODE HERE - REPLACE THE OLD FUNCTION
+    """Move pacman in a random valid direction"""
+    directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # possible movements
+    random.shuffle(directions)  # randomize directions
+    for dx, dy in directions:
+        new_x = player_pos[0] + dx
+        new_y = player_pos[1] + dy
+        if can_move(new_x, new_y):
+            player_pos[0] = new_x
+            player_pos[1] = new_y
+            break
+
+
 def update_visibility():
     """Update visibility grid based on player's position"""
     px, py = player_pos[0], player_pos[1]
@@ -212,6 +226,7 @@ clock = pygame.time.Clock()
 # Initial update of visibility
 update_visibility()
 
+
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -224,32 +239,19 @@ while running:
         # Handle Pac-Man movement
         current_time = time.time()
         if current_time - last_move_time >= MOVE_INTERVAL:
-            keys = pygame.key.get_pressed()
-            new_x, new_y = player_pos[0], player_pos[1]
+            move_pacman()
+            check_collision()
+            update_visibility()
 
-            if keys[pygame.K_LEFT]:
-                new_x -= 1
-            elif keys[pygame.K_RIGHT]:
-                new_x += 1
-            elif keys[pygame.K_UP]:
-                new_y -= 1
-            elif keys[pygame.K_DOWN]:
-                new_y += 1
+            # Collect dot if present
+            if grid[player_pos[1]][player_pos[0]] == 2:
+                grid[player_pos[1]][player_pos[0]] = 0
+                score += 1
+                # Check for victory
+                if check_victory():
+                    victory = True
 
-            # Update position if movement is valid
-            if can_move(new_x, new_y):
-                player_pos = [new_x, new_y]
-                # Update visibility
-                update_visibility()
-                # Collect dot if present
-                if grid[new_y][new_x] == 2:
-                    grid[new_y][new_x] = 0
-                    score += 1
-                    # Check for victory
-                    if check_victory():
-                        victory = True
-
-                last_move_time = current_time
+            last_move_time = current_time
 
         # Handle ghost movement
         if current_time - last_ghost_move_time >= GHOST_MOVE_INTERVAL:
