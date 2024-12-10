@@ -75,6 +75,9 @@ victory = False
 # Vision settings
 VISION_RADIUS = 5  # Adjust as needed
 
+# Track last player direction to avoid immediate back-and-forth
+last_pacman_dir = None
+
 
 def grid_to_pixel(grid_x, grid_y):
     """Convert grid coordinates to pixel coordinates"""
@@ -92,7 +95,6 @@ def move_ghost():
     """Move ghost in a random valid direction"""
     directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # possible movements
     random.shuffle(directions)  # randomize directions
-
     for dx, dy in directions:
         new_x = ghost_pos[0] + dx
         new_y = ghost_pos[1] + dy
@@ -114,18 +116,17 @@ def check_victory():
 
 def reset_game():
     """Reset the game state"""
-    global player_pos, ghost_pos, score, game_over, victory, grid, visibility_grid
+    global player_pos, ghost_pos, score, game_over, victory, grid, visibility_grid, last_pacman_dir
     player_pos = [10, 15]
     ghost_pos = [10, 8]
     score = 0
     game_over = False
     victory = False
+    last_pacman_dir = None
     # Reset grid - restore all dots
     for y in range(GRID_HEIGHT):
         for x in range(GRID_WIDTH):
-            if grid[y][x] == 0 and not (
-                y == 8 and x == 8
-            ):  # Don't put dots in ghost area
+            if grid[y][x] == 0 and not (y == 8 and x == 8):
                 grid[y][x] = 2
     # Reset visibility grid
     visibility_grid = [[0 for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
@@ -178,13 +179,18 @@ def get_line(x0, y0, x1, y1):
         points.append((x, y))
     return points
 
+
 def normalize_belief(belief):
     total_prob = sum(belief.values())
     if total_prob > 0:
         return {k: v / total_prob for k, v in belief.items()}
     else:
         # Reset belief to uniform distribution
-        return {(x, y): 1 / (GRID_WIDTH * GRID_HEIGHT) for y in range(GRID_HEIGHT) for x in range(GRID_WIDTH)}
+        return {
+            (x, y): 1 / (GRID_WIDTH * GRID_HEIGHT)
+            for y in range(GRID_HEIGHT)
+            for x in range(GRID_WIDTH)
+        }
 
 
 def update_belief_pomdp(belief, observation, ghost_pos, visibility_grid):
@@ -192,45 +198,76 @@ def update_belief_pomdp(belief, observation, ghost_pos, visibility_grid):
     Update belief state based on observation and ghost movement.
     """
     new_belief = {}
-    if observation == 2:  # Ghost observed
-        new_belief = {pos: (1 if pos == ghost_pos else 0) for pos in belief}
+    if observation == 2:  # Ghost observed at player's position
+        new_belief = {pos: (1 if pos == tuple(ghost_pos) else 0) for pos in belief}
     else:
         # Update belief based on ghost movement
         for (x, y), prob in belief.items():
             neighbors = [
                 (x + dx, y + dy)
                 for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]
-                if 0 <= x + dx < GRID_WIDTH and 0 <= y + dy < GRID_HEIGHT and grid[y + dy][x + dx] != 1
+                if 0 <= x + dx < GRID_WIDTH
+                and 0 <= y + dy < GRID_HEIGHT
+                and grid[y + dy][x + dx] != 1
             ]
-            prob_per_neighbor = prob / len(neighbors) if neighbors else prob
-            for nx, ny in neighbors:
-                new_belief[(nx, ny)] = new_belief.get((nx, ny), 0) + prob_per_neighbor
+            if neighbors:
+                prob_per_neighbor = prob / len(neighbors)
+                for nx, ny in neighbors:
+                    new_belief[(nx, ny)] = (
+                        new_belief.get((nx, ny), 0) + prob_per_neighbor
+                    )
+            else:
+                # If no neighbors, remain in place
+                new_belief[(x, y)] = new_belief.get((x, y), 0) + prob
 
     # Normalize the belief
     return normalize_belief(new_belief)
 
-def solve_pomdp(belief, rewards, discount=0.9, iterations=100):
+
+def get_neighborhood(center_x, center_y, radius=5):
     """
-    Solve the POMDP by estimating action values based on belief and reward function.
+    Get all cells within a given Manhattan distance from a center.
     """
-    actions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # Right, Left, Down, Up
+    neighbors = []
+    for dx in range(-radius, radius + 1):
+        for dy in range(-radius, radius + 1):
+            x, y = center_x + dx, center_y + dy
+            if (
+                0 <= x < GRID_WIDTH
+                and 0 <= y < GRID_HEIGHT
+                and abs(dx) + abs(dy) <= radius
+            ):
+                neighbors.append((x, y))
+    return neighbors
+
+
+def solve_pomdp(belief, rewards, radius=5, discount=0.9, iterations=50):
+    """
+    Solve the POMDP by focusing on a neighborhood around Pac-Man.
+    """
+    actions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # Down, Up, Right, Left
+    # Initialize action_values
     action_values = {((x, y), (dx, dy)): 0 for (x, y) in belief for (dx, dy) in actions}
+
+    # Restrict computation to relevant cells
+    # Just a heuristic to not solve entire map every time
+    neighborhood = get_neighborhood(player_pos[0], player_pos[1], radius)
 
     for _ in range(iterations):
         new_action_values = {}
-        for (x, y), prob in belief.items():
+        for x, y in neighborhood:
             if grid[y][x] == 1:  # Skip walls
                 continue
             for dx, dy in actions:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < GRID_WIDTH and 0 <= ny < GRID_HEIGHT and grid[ny][nx] != 1:
                     reward = rewards[y][x]
-                    ghost_penalty = -100 if abs(nx - ghost_pos[0]) + abs(ny - ghost_pos[1]) < 2 else 0
-                    reward = rewards[y][x] + ghost_penalty
                     future_value = discount * sum(
-    belief.get((nx, ny), 0) * max(action_values.get(((nx, ny), a), 0) for a in actions)
-    for (nx, ny) in belief)
-                    new_value = prob * (reward + future_value)
+                        belief.get((sx, sy), 0)
+                        * max(action_values.get(((sx, sy), a), 0) for a in actions)
+                        for (sx, sy) in neighborhood
+                    )
+                    new_value = belief.get((x, y), 0) * (reward + future_value)
                     new_action_values[((x, y), (dx, dy))] = (
                         new_action_values.get(((x, y), (dx, dy)), 0) + new_value
                     )
@@ -238,38 +275,69 @@ def solve_pomdp(belief, rewards, discount=0.9, iterations=100):
 
     return action_values
 
-def move_pacman_pomdp(player_pos, belief, action_values):
+
+def move_pacman_pomdp(player_pos, belief, action_values, last_direction):
     """
     Move Pac-Man based on POMDP by maximizing expected utility.
+    Add tie-breaking and avoid immediate backtracking to reduce oscillation.
     """
-    actions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # Right, Left, Down, Up
-    best_action = None
-    best_value = float('-inf')
+    actions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # Down, Up, Right, Left
+    best_actions = []
+    best_value = float("-inf")
 
     for dx, dy in actions:
         value = 0
         for (x, y), prob in belief.items():
             state_action = ((x, y), (dx, dy))
             value += prob * action_values.get(state_action, -1000)
-
         if value > best_value:
             best_value = value
-            best_action = (dx, dy)
+            best_actions = [(dx, dy)]
+        elif abs(value - best_value) < 1e-6:
+            # Tie: consider multiple best actions
+            best_actions.append((dx, dy))
+
+    # Random tie-break among best actions
+    if best_actions:
+        best_action = random.choice(best_actions)
+    else:
+        best_action = None
+
+    # Avoid immediate backtracking if possible
+    if (
+        best_action
+        and last_direction
+        and (
+            best_action[0] == -last_direction[0]
+            and best_action[1] == -last_direction[1]
+        )
+    ):
+        # Try to pick another best action that is not opposite
+        non_opposites = [
+            a
+            for a in best_actions
+            if not (a[0] == -last_direction[0] and a[1] == -last_direction[1])
+        ]
+        if non_opposites:
+            best_action = random.choice(non_opposites)
 
     if best_action:
         new_x = player_pos[0] + best_action[0]
         new_y = player_pos[1] + best_action[1]
         if can_move(new_x, new_y):
-            return new_x, new_y
+            return (new_x, new_y), best_action
 
-    # Random fallback movement
-    random_action = random.choice(actions)
-    new_x = player_pos[0] + random_action[0]
-    new_y = player_pos[1] + random_action[1]
-    if can_move(new_x, new_y):
-        return new_x, new_y
+    # Random fallback movement if no good action found
+    random_actions = actions[:]
+    random.shuffle(random_actions)
+    for dx, dy in random_actions:
+        new_x = player_pos[0] + dx
+        new_y = player_pos[1] + dy
+        if can_move(new_x, new_y):
+            return (new_x, new_y), (dx, dy)
 
-    return player_pos
+    # No move possible, stay in place
+    return player_pos, None
 
 
 def update_visibility():
@@ -299,19 +367,58 @@ def update_visibility():
                         visibility_grid[y][x] = 2  # currently visible
 
 
-# Main game loop
-clock = pygame.time.Clock()
+def distance(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def compute_rewards(ghost_pos):
+    """
+    Compute rewards dynamically:
+    - High reward for dots.
+    - Slight negative reward for normal paths.
+    - Extra reward for exploring unseen areas (visibility == 0).
+    - Negative reward for cells near the ghost (increases as get closer).
+    """
+    new_rewards = [[0 for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
+    for y in range(GRID_HEIGHT):
+        for x in range(GRID_WIDTH):
+            if grid[y][x] == 1:
+                # Wall - no movement here, can be low or zero
+                new_rewards[y][x] = -100
+            elif grid[y][x] == 2:
+                # Dot
+                new_rewards[y][x] = 100
+            else:
+                # Empty path
+                # Base: small negative to encourage moving rather than staying
+                new_rewards[y][x] = -5
+
+            # Encourage exploration: unseen cells get an extra positive reward
+            if visibility_grid[y][x] == 0:
+                new_rewards[y][x] += 20  # unseen cells are highly attractive
+
+            # Penalize proximity to ghost
+            d = distance((x, y), ghost_pos)
+            if d < 5:
+                # The closer to the ghost, the more negative
+                new_rewards[y][x] -= (5 - d) * 20  # stronger penalty when closer
+
+    return new_rewards
+
 
 # Initial update of visibility
 update_visibility()
 
-# Initialize the game loop
-# Initialize rewards and belief
-rewards = [[100 if cell == 2 else -5 for cell in row] for row in grid]
-belief = {(x, y): 1 / (GRID_WIDTH * GRID_HEIGHT) for y in range(GRID_HEIGHT) for x in range(GRID_WIDTH)}
-action_values = solve_pomdp(belief, rewards)
+# Initialize belief
+belief = {
+    (x, y): 1 / (GRID_WIDTH * GRID_HEIGHT)
+    for y in range(GRID_HEIGHT)
+    for x in range(GRID_WIDTH)
+}
 
-# Main game loop modification
+clock = pygame.time.Clock()
+
+# Main game loop
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -321,20 +428,29 @@ while running:
                 reset_game()
 
     if not game_over and not victory:
-        # Handle Pac-Man movement
         current_time = time.time()
+
+        # Compute dynamic rewards based on current state
+        rewards = compute_rewards(ghost_pos)
+
+        # Handle Pac-Man movement
         if current_time - last_move_time >= MOVE_INTERVAL:
             # Update belief state based on observation
             observation = visibility_grid[player_pos[1]][player_pos[0]]
-            belief = update_belief_pomdp(belief, observation, ghost_pos, visibility_grid)
+            belief = update_belief_pomdp(
+                belief, observation, ghost_pos, visibility_grid
+            )
 
             # Solve POMDP and move Pac-Man
             action_values = solve_pomdp(belief, rewards)
-            new_x, new_y = move_pacman_pomdp(player_pos, belief, action_values)
+            (new_x, new_y), chosen_dir = move_pacman_pomdp(
+                player_pos, belief, action_values, last_pacman_dir
+            )
 
             # Update position if valid
             if can_move(new_x, new_y):
                 player_pos = [new_x, new_y]
+                last_pacman_dir = chosen_dir if chosen_dir else last_pacman_dir
                 # Update visibility
                 update_visibility()
                 # Collect dot if present
@@ -350,7 +466,9 @@ while running:
         # Handle ghost movement
         if current_time - last_ghost_move_time >= GHOST_MOVE_INTERVAL:
             move_ghost()
-            belief = normalize_belief(update_belief_pomdp(belief, None, ghost_pos, visibility_grid))
+            belief = normalize_belief(
+                update_belief_pomdp(belief, None, ghost_pos, visibility_grid)
+            )
             last_ghost_move_time = current_time
 
         # Check if ghost caught Pac-Man

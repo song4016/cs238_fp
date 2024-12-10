@@ -178,9 +178,11 @@ def get_line(x0, y0, x1, y1):
         points.append((x, y))
     return points
 
+
 def normalize_belief(belief):
     total_prob = sum(belief.values())
     return {k: v / total_prob for k, v in belief.items()} if total_prob > 0 else belief
+
 
 def update_belief(belief, ghost_pos, visibility_grid):
     """Update belief state based on visibility and ghost movement."""
@@ -190,12 +192,19 @@ def update_belief(belief, ghost_pos, visibility_grid):
             new_belief[(x, y)] = 1 if (x, y) == ghost_pos else 0
         else:
             # Spread probability to neighbors for ghost movement
-            neighbors = [(x + dx, y + dy) for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]]
-            valid_neighbors = [(nx, ny) for nx, ny in neighbors if 0 <= nx < GRID_WIDTH and 0 <= ny < GRID_HEIGHT and grid[ny][nx] != 1]
+            neighbors = [
+                (x + dx, y + dy) for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]
+            ]
+            valid_neighbors = [
+                (nx, ny)
+                for nx, ny in neighbors
+                if 0 <= nx < GRID_WIDTH and 0 <= ny < GRID_HEIGHT and grid[ny][nx] != 1
+            ]
             prob_per_neighbor = prob / len(valid_neighbors) if valid_neighbors else prob
             for nx, ny in valid_neighbors:
                 new_belief[(nx, ny)] = new_belief.get((nx, ny), 0) + prob_per_neighbor
     return new_belief
+
 
 def solve_mdp(grid, rewards, discount=0.9, iterations=1000):
     """Solve the MDP using Value Iteration."""
@@ -217,7 +226,11 @@ def solve_mdp(grid, rewards, discount=0.9, iterations=1000):
                 q_values = []
                 for dx, dy in actions:
                     nx, ny = x + dx, y + dy
-                    if 0 <= nx < grid_width and 0 <= ny < grid_height and grid[ny][nx] != 1:
+                    if (
+                        0 <= nx < grid_width
+                        and 0 <= ny < grid_height
+                        and grid[ny][nx] != 1
+                    ):
                         q_values.append(rewards[y][x] + discount * values[ny][nx])
                     else:
                         q_values.append(rewards[y][x])  # Stay in place if invalid move
@@ -236,17 +249,20 @@ def solve_mdp(grid, rewards, discount=0.9, iterations=1000):
             for dx, dy in actions:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < grid_width and 0 <= ny < grid_height and grid[ny][nx] != 1:
-                    q_values[((x, y), (dx, dy))] = rewards[y][x] + discount * values[ny][nx]
+                    q_values[((x, y), (dx, dy))] = (
+                        rewards[y][x] + discount * values[ny][nx]
+                    )
                 else:
                     q_values[((x, y), (dx, dy))] = rewards[y][x]  # Stay in place
 
     return q_values
 
+
 def move_pacman_qmdp(player_pos, q_values, belief, exploration_prob=0.1):
     """Move Pac-Man using QMDP with added exploration."""
     actions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # Right, Left, Down, Up
     best_action = None
-    best_q_value = float('-inf')
+    best_q_value = float("-inf")
 
     # Exploration: Randomly pick an action with probability exploration_prob
     if random.random() < exploration_prob:
@@ -310,7 +326,11 @@ update_visibility()
 # Initialize q_values and belief
 rewards = [[100 if cell == 2 else -5 for cell in row] for row in grid]
 q_values = solve_mdp(grid, rewards)
-belief = {(x, y): 1 / (GRID_WIDTH * GRID_HEIGHT) for y in range(GRID_HEIGHT) for x in range(GRID_WIDTH)}
+belief = {
+    (x, y): 1 / (GRID_WIDTH * GRID_HEIGHT)
+    for y in range(GRID_HEIGHT)
+    for x in range(GRID_WIDTH)
+}
 
 # Main game loop modification
 while running:

@@ -73,7 +73,7 @@ game_over = False
 victory = False
 
 # Vision settings
-VISION_RADIUS = 5  # Adjust as needed
+VISION_RADIUS = 5
 
 
 def grid_to_pixel(grid_x, grid_y):
